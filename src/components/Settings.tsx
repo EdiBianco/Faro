@@ -961,7 +961,7 @@ function Toggle({
     >
       <span
         className={cn(
-          "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-elev-1 transition-transform",
+          "absolute left-px top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow-elev-1 transition-transform",
           checked ? "translate-x-4" : "translate-x-0"
         )}
       />
