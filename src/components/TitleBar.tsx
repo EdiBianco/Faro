@@ -22,6 +22,8 @@ import {
   ZoomIn,
   ZoomOut,
   Search,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { useSettings, stepUiZoom } from "@/stores/settingsStore";
 import { useLayout } from "@/stores/layoutStore";
@@ -41,6 +43,7 @@ const REPO_URL = "https://github.com/jhd3197/faro";
 /// when the event target is a button or has the explicit attribute).
 export function TitleBar() {
   const appTheme = useSettings((s) => s.appTheme);
+  const frameStyle = useSettings((s) => s.frameStyle);
   const setAppTheme = useSettings((s) => s.setAppTheme);
   const uiZoom = useSettings((s) => s.uiZoom);
   const setUiZoom = useSettings((s) => s.setUiZoom);
@@ -205,11 +208,14 @@ export function TitleBar() {
     },
   ];
 
+  const controls = { minimize, toggleMaximize, close, maximized };
+
   return (
     <div
       data-tauri-drag-region
       className="flex h-9 shrink-0 select-none items-center gap-1 border-b border-border bg-bg-panel px-2"
     >
+      {frameStyle === "macos" && <TrafficLights {...controls} />}
       <Logo />
       <span
         className="text-[13px] font-semibold tracking-tight"
@@ -231,17 +237,32 @@ export function TitleBar() {
         <SettingsIcon size={13} />
       </IconButton>
 
-      <div className="ml-1 flex h-9 items-stretch">
-        <WindowButton onClick={minimize} title="Minimize">
-          <Minus size={12} />
-        </WindowButton>
-        <WindowButton onClick={toggleMaximize} title={maximized ? "Restore" : "Maximize"}>
-          {maximized ? <CopySquares size={11} /> : <Square size={11} />}
-        </WindowButton>
-        <WindowButton onClick={close} title="Close" danger>
-          <X size={13} />
-        </WindowButton>
-      </div>
+      {frameStyle === "windows" && (
+        <div className="ml-1 flex h-9 items-stretch">
+          <WindowButton onClick={minimize} title="Minimize">
+            <Minus size={12} />
+          </WindowButton>
+          <WindowButton onClick={toggleMaximize} title={maximized ? "Restore" : "Maximize"}>
+            {maximized ? <CopySquares size={11} /> : <Square size={11} />}
+          </WindowButton>
+          <WindowButton onClick={close} title="Close" danger>
+            <X size={13} />
+          </WindowButton>
+        </div>
+      )}
+      {frameStyle === "linux" && (
+        <div className="ml-2 flex items-center gap-1">
+          <RoundWindowButton onClick={minimize} title="Minimize">
+            <Minus size={13} />
+          </RoundWindowButton>
+          <RoundWindowButton onClick={toggleMaximize} title={maximized ? "Restore" : "Maximize"}>
+            {maximized ? <CopySquares size={12} /> : <Square size={12} />}
+          </RoundWindowButton>
+          <RoundWindowButton onClick={close} title="Close" danger>
+            <X size={14} />
+          </RoundWindowButton>
+        </div>
+      )}
     </div>
   );
 }
@@ -388,6 +409,82 @@ function WindowButton({
       title={title}
       className={cn(
         "flex h-9 w-11 items-center justify-center text-text-muted transition-colors",
+        danger
+          ? "hover:bg-danger hover:text-white"
+          : "hover:bg-bg-hover hover:text-text"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/// macOS-style traffic lights: close / minimize / zoom on the left, glyphs
+/// appear while the cluster is hovered (as on macOS).
+function TrafficLights({
+  minimize,
+  toggleMaximize,
+  close,
+  maximized,
+}: {
+  minimize: () => void;
+  toggleMaximize: () => void;
+  close: () => void;
+  maximized: boolean;
+}) {
+  const [hover, setHover] = useState(false);
+  const light = (
+    color: string,
+    title: string,
+    onClick: () => void,
+    glyph: React.ReactNode,
+  ) => (
+    <button
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className="flex h-3 w-3 items-center justify-center rounded-full text-black/60"
+      style={{ backgroundColor: color, boxShadow: "inset 0 0 0 0.5px rgba(0,0,0,0.25)" }}
+    >
+      {hover && glyph}
+    </button>
+  );
+  return (
+    <div
+      className="ml-1 mr-2 flex items-center gap-2 px-1"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      {light("#ff5f57", "Close", close, <X size={8} strokeWidth={3} />)}
+      {light("#febc2e", "Minimize", minimize, <Minus size={8} strokeWidth={3} />)}
+      {light(
+        "#28c840",
+        maximized ? "Restore" : "Maximize",
+        toggleMaximize,
+        maximized ? <Minimize2 size={7} strokeWidth={3} /> : <Maximize2 size={7} strokeWidth={3} />,
+      )}
+    </div>
+  );
+}
+
+/// Linux (GNOME/Adwaita-style) headerbar control: small rounded flat button.
+function RoundWindowButton({
+  onClick,
+  title,
+  danger,
+  children,
+}: {
+  onClick: () => void;
+  title: string;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={cn(
+        "flex h-7 w-7 items-center justify-center rounded-full text-text-muted transition-colors",
         danger
           ? "hover:bg-danger hover:text-white"
           : "hover:bg-bg-hover hover:text-text"
