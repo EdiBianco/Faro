@@ -1,14 +1,28 @@
+use crate::credentials;
+use crate::db::Db;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
 
+/// faro.db setting (JSON `"true"`/`"false"`) that keeps saved profile passwords
+/// in the OS keychain instead of `profiles.json`.
+pub const KEYCHAIN_SETTING: &str = "storePasswordsInKeychain";
+
+pub fn keychain_enabled(db: &Db) -> bool {
+    db.settings_get(KEYCHAIN_SETTING).ok().flatten().as_deref() == Some("true")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum AuthMethod {
-    Password { password: String },
+    Password {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        password: String,
+    },
     Key {
         path: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,39 +113,87 @@ pub struct ConnectionProfile {
     pub ftp_segments: Option<u8>,
 }
 
-// Plain JSON file in the app data dir. v0.2 moves secrets into the OS
-// keychain and leaves only references here.
+// Plain JSON file in the app data dir. With the keychain setting on, saved
+// passwords live in the OS keychain and are left out of this file.
 pub struct ProfileStore {
     path: PathBuf,
+    keychain: AtomicBool,
     inner: Arc<Mutex<Vec<ConnectionProfile>>>,
 }
 
 impl ProfileStore {
-    pub fn load_or_create(app: &AppHandle) -> Result<Self> {
+    pub fn load_or_create(app: &AppHandle, keychain: bool) -> Result<Self> {
         let dir = app
             .path()
             .app_data_dir()
             .context("resolving app_data_dir")?;
-        Self::from_dir(&dir)
+        Self::from_dir(&dir, keychain)
     }
 
     /// Load (or initialise) the profile store from a known directory. Used by
     /// the CLI binary, which doesn't have a Tauri AppHandle. Resolves to the
     /// same on-disk path the GUI uses — see `default_data_dir`.
-    pub fn from_dir(dir: &std::path::Path) -> Result<Self> {
+    pub fn from_dir(dir: &std::path::Path, keychain: bool) -> Result<Self> {
         std::fs::create_dir_all(dir).ok();
         let path = dir.join("profiles.json");
-        let profiles: Vec<ConnectionProfile> = if path.exists() {
+        let mut profiles: Vec<ConnectionProfile> = if path.exists() {
             let bytes = std::fs::read(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
             serde_json::from_slice(&bytes).unwrap_or_default()
         } else {
             Vec::new()
         };
+        if keychain {
+            for p in profiles.iter_mut() {
+                if let AuthMethod::Password { password } = &mut p.auth {
+                    if password.is_empty() {
+                        if let Some(v) = credentials::get_secret(&credentials::profile_password_purpose(&p.id))? {
+                            *password = v;
+                        }
+                    }
+                }
+            }
+        }
         Ok(Self {
             path: path.clone(),
+            keychain: AtomicBool::new(keychain),
             inner: Arc::new(Mutex::new(profiles)),
         })
+    }
+
+    pub fn keychain_enabled(&self) -> bool {
+        self.keychain.load(Ordering::SeqCst)
+    }
+
+    /// Switch where saved passwords live. Turning it on moves each password into
+    /// the keychain before the file drops it; turning it off writes them back to
+    /// the file before the keychain entries are removed.
+    pub async fn set_keychain(&self, on: bool, db: &Db) -> Result<()> {
+        let g = self.inner.lock().await;
+        if on {
+            for p in g.iter() {
+                sync_password_secret(p, db)?;
+            }
+            self.keychain.store(true, Ordering::SeqCst);
+            if let Err(e) = self.write(&g) {
+                self.keychain.store(false, Ordering::SeqCst);
+                return Err(e);
+            }
+        } else {
+            self.keychain.store(false, Ordering::SeqCst);
+            if let Err(e) = self.write(&g) {
+                self.keychain.store(true, Ordering::SeqCst);
+                return Err(e);
+            }
+            for p in g.iter() {
+                if let AuthMethod::Password { .. } = &p.auth {
+                    let purpose = credentials::profile_password_purpose(&p.id);
+                    credentials::delete_secret(&purpose);
+                    let _ = db.forget_keychain(credentials::SERVICE, &purpose);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn list(&self) -> Result<Vec<ConnectionProfile>> {
@@ -174,9 +236,72 @@ impl ProfileStore {
     }
 
     fn write(&self, profiles: &[ConnectionProfile]) -> Result<()> {
-        let bytes = serde_json::to_vec_pretty(profiles)?;
+        let bytes = serde_json::to_vec_pretty(&for_disk(profiles, self.keychain_enabled()))?;
         std::fs::write(&self.path, bytes)
             .with_context(|| format!("writing {}", self.path.display()))?;
         Ok(())
+    }
+}
+
+/// Keychain side of one profile's saved password (only called in keychain mode):
+/// write it under the profile's purpose and record it in the manifest so backups
+/// pick it up, or clear both when the password is empty.
+pub fn sync_password_secret(profile: &ConnectionProfile, db: &Db) -> Result<()> {
+    let AuthMethod::Password { password } = &profile.auth else {
+        return Ok(());
+    };
+    let purpose = credentials::profile_password_purpose(&profile.id);
+    if password.is_empty() {
+        credentials::delete_secret(&purpose);
+        db.forget_keychain(credentials::SERVICE, &purpose)
+    } else {
+        credentials::set_secret(&purpose, password)?;
+        db.record_keychain(credentials::SERVICE, &purpose)
+    }
+}
+
+/// What lands in `profiles.json`: with the keychain on, passwords are blanked so
+/// they never reach the file.
+fn for_disk(profiles: &[ConnectionProfile], keychain: bool) -> Vec<ConnectionProfile> {
+    profiles
+        .iter()
+        .cloned()
+        .map(|mut p| {
+            if keychain {
+                if let AuthMethod::Password { password } = &mut p.auth {
+                    password.clear();
+                }
+            }
+            p
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn password_profile() -> ConnectionProfile {
+        serde_json::from_value(serde_json::json!({
+            "id": "p1",
+            "name": "box",
+            "protocol": "sftp",
+            "host": "example.test",
+            "port": 22,
+            "username": "ivo",
+            "auth": { "kind": "password", "password": "hunter2" }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn keychain_mode_keeps_password_out_of_file() {
+        let profiles = [password_profile()];
+        let on = serde_json::to_string(&for_disk(&profiles, true)).unwrap();
+        assert!(!on.contains("hunter2"));
+        let off = serde_json::to_string(&for_disk(&profiles, false)).unwrap();
+        assert!(off.contains("hunter2"));
+        // The in-memory profile is untouched either way.
+        assert!(matches!(&profiles[0].auth, AuthMethod::Password { password } if password == "hunter2"));
     }
 }

@@ -205,10 +205,6 @@ pub fn run() {
                 backup::apply_pending_restore(&data_dir);
             }
 
-            let profile_store = Arc::new(
-                profiles::ProfileStore::load_or_create(&handle)
-                    .expect("failed to initialise profile store"),
-            );
             let db = {
                 let dir = handle
                     .path()
@@ -217,6 +213,10 @@ pub fn run() {
                 std::fs::create_dir_all(&dir).ok();
                 Arc::new(db::Db::open(&dir.join("faro.db")).expect("failed to open faro.db"))
             };
+            let profile_store = Arc::new(
+                profiles::ProfileStore::load_or_create(&handle, profiles::keychain_enabled(&db))
+                    .expect("failed to initialise profile store"),
+            );
             // Remote thumbnail cache lives under the app data dir alongside faro.db
             // (the codebase keeps everything under app_data_dir; there's no
             // app_cache_dir convention here).
@@ -392,6 +392,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_profiles,
             commands::save_profile,
+            commands::set_profile_password_keychain,
             commands::reorder_profiles,
             commands::delete_profile,
             commands::ssh_key_defaults,

@@ -145,6 +145,8 @@ interface SettingsState {
 
   // Connections
   defaultPort: number;
+  /** Keep saved connection passwords in the OS keychain instead of profiles.json. */
+  storePasswordsInKeychain: boolean;
 
   // Notifications (Plan 16 Phase 3)
   notifications: NotificationSettings;
@@ -179,6 +181,8 @@ interface SettingsState {
   setTerminalCopyOnSelect: (v: boolean) => void;
   setTerminalSuggestions: (v: boolean) => void;
   setDefaultPort: (n: number) => void;
+  /** Resolves once the passwords have moved; rejects (value unchanged) if the keychain refuses. */
+  setStorePasswordsInKeychain: (v: boolean) => Promise<void>;
   setNotifications: (v: NotificationSettings) => void;
 }
 
@@ -232,6 +236,7 @@ type Persisted = Omit<
   | "setTerminalCopyOnSelect"
   | "setTerminalSuggestions"
   | "setDefaultPort"
+  | "setStorePasswordsInKeychain"
   | "setNotifications"
 >;
 
@@ -270,6 +275,7 @@ const DEFAULTS: Persisted = {
   terminalCopyOnSelect: true,
   terminalSuggestions: true,
   defaultPort: 22,
+  storePasswordsInKeychain: false,
   notifications: { enabled: true, unfocusedOnly: true },
 };
 
@@ -391,6 +397,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setTerminalSuggestions: (v) =>
     mutate(set, get, "terminalSuggestions", v),
   setDefaultPort: (n) => mutate(set, get, "defaultPort", n),
+  setStorePasswordsInKeychain: async (v) => {
+    await ipc.setProfilePasswordKeychain(v);
+    mutate(set, get, "storePasswordsInKeychain", v);
+  },
   setNotifications: (v) => mutate(set, get, "notifications", v),
 }));
 
