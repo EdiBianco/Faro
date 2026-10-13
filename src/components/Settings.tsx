@@ -460,14 +460,26 @@ export function Settings({ onClose }: Props) {
 
       case "connections":
         return (
-          <Field label="Default port for new profiles">
-            <NumberInput
-              min={1}
-              max={65535}
-              value={s.defaultPort}
-              onChange={s.setDefaultPort}
+          <>
+            <Field label="Default port for new profiles">
+              <NumberInput
+                min={1}
+                max={65535}
+                value={s.defaultPort}
+                onChange={s.setDefaultPort}
+              />
+            </Field>
+            <ToggleField
+              label="Store passwords in the OS keychain"
+              help="Keep saved connection passwords in macOS Keychain / Windows Credential Manager instead of plaintext in profiles.json. Turning it on or off moves the existing passwords straight away."
+              checked={s.storePasswordsInKeychain}
+              onChange={(v) =>
+                s.setStorePasswordsInKeychain(v).catch((e) =>
+                  toastError(e, "Couldn't change where passwords are stored"),
+                )
+              }
             />
-          </Field>
+          </>
         );
 
       case "remoteControl":
