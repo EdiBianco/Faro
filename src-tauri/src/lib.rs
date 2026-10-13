@@ -205,10 +205,6 @@ pub fn run() {
                 backup::apply_pending_restore(&data_dir);
             }
 
-            let profile_store = Arc::new(
-                profiles::ProfileStore::load_or_create(&handle)
-                    .expect("failed to initialise profile store"),
-            );
             let db = {
                 let dir = handle
                     .path()
@@ -217,6 +213,52 @@ pub fn run() {
                 std::fs::create_dir_all(&dir).ok();
                 Arc::new(db::Db::open(&dir.join("faro.db")).expect("failed to open faro.db"))
             };
+            let keychain = {
+                let dir = handle
+                    .path()
+                    .app_data_dir()
+                    .expect("resolving app_data_dir for keychain setting");
+                profiles::resolve_keychain_setting(&db, &dir)
+            };
+            let profile_store = Arc::new(
+                profiles::ProfileStore::load_or_create(&handle, keychain)
+                    .expect("failed to initialise profile store"),
+            );
+            // Linux builds before 1.3.48 kept keychain entries in keyutils
+            // only, which a reboot clears. Copy the survivors into Secret
+            // Service once; retried each launch until every entry made it.
+            #[cfg(target_os = "linux")]
+            {
+                const PERSISTED: &str = "linuxKeychainPersisted";
+                if db.settings_get(PERSISTED).ok().flatten().is_none() {
+                    let db = db.clone();
+                    let profiles = profile_store.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let mut entries = db.list_keychain().unwrap_or_default();
+                        // OAuth tokens aren't in the manifest: one entry per
+                        // cloud profile under its provider's service.
+                        for p in profiles.list().await.unwrap_or_default() {
+                            let service = match p.protocol.as_str() {
+                                "dropbox" => session::dropbox::DROPBOX_SERVICE,
+                                "onedrive" => session::onedrive::ONEDRIVE_SERVICE,
+                                "gdrive" => session::gdrive::GDRIVE_SERVICE,
+                                "box" => session::boxdrive::BOX_SERVICE,
+                                "dynamics" => session::dynamics::DYNAMICS_TOKEN_SERVICE,
+                                _ => continue,
+                            };
+                            entries.push((service.to_string(), p.id.clone()));
+                        }
+                        let done = tauri::async_runtime::spawn_blocking(move || {
+                            credentials::persist_keyutils_entries(&entries)
+                        })
+                        .await
+                        .unwrap_or(false);
+                        if done {
+                            let _ = db.settings_set(PERSISTED, "true");
+                        }
+                    });
+                }
+            }
             // Remote thumbnail cache lives under the app data dir alongside faro.db
             // (the codebase keeps everything under app_data_dir; there's no
             // app_cache_dir convention here).
@@ -392,6 +434,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_profiles,
             commands::save_profile,
+            commands::set_profile_password_keychain,
+            commands::profile_keychain_warnings,
             commands::reorder_profiles,
             commands::delete_profile,
             commands::ssh_key_defaults,

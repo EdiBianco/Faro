@@ -9,6 +9,7 @@ import {
   COLOR_THEMES,
   UI_ZOOM_STEPS,
   type AppTheme,
+  type FrameStyle,
   type OverwritePolicy,
   type SortField,
   type SortDirection,
@@ -125,6 +126,20 @@ export function Settings({ onClose }: Props) {
                   value: z,
                   label: z === 100 ? "100% (Default)" : `${z}%`,
                 }))}
+              />
+            </Field>
+            <Field
+              label="Window frame"
+              help="Where the window controls sit in Faro's title bar. Looks only — the window behaves the same."
+            >
+              <Segmented<FrameStyle>
+                value={s.frameStyle}
+                onChange={s.setFrameStyle}
+                options={[
+                  { value: "windows", label: "Windows" },
+                  { value: "macos", label: "macOS" },
+                  { value: "linux", label: "Linux" },
+                ]}
               />
             </Field>
             <Field
@@ -460,14 +475,26 @@ export function Settings({ onClose }: Props) {
 
       case "connections":
         return (
-          <Field label="Default port for new profiles">
-            <NumberInput
-              min={1}
-              max={65535}
-              value={s.defaultPort}
-              onChange={s.setDefaultPort}
+          <>
+            <Field label="Default port for new profiles">
+              <NumberInput
+                min={1}
+                max={65535}
+                value={s.defaultPort}
+                onChange={s.setDefaultPort}
+              />
+            </Field>
+            <ToggleField
+              label="Store passwords and key passphrases in the OS keychain"
+              help="Keep saved connection passwords and SSH key passphrases in macOS Keychain / Windows Credential Manager instead of plaintext in profiles.json. Turning it on or off moves them straight away."
+              checked={s.storePasswordsInKeychain}
+              onChange={(v) =>
+                s.setStorePasswordsInKeychain(v).catch((e) =>
+                  toastError(e, "Couldn't change where passwords are stored"),
+                )
+              }
             />
-          </Field>
+          </>
         );
 
       case "remoteControl":
@@ -934,7 +961,7 @@ function Toggle({
     >
       <span
         className={cn(
-          "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-elev-1 transition-transform",
+          "absolute left-px top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow-elev-1 transition-transform",
           checked ? "translate-x-4" : "translate-x-0"
         )}
       />

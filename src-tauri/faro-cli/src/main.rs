@@ -761,7 +761,9 @@ fn default_data_dir() -> Result<PathBuf> {
 
 fn open_store() -> Result<ProfileStore> {
     let dir = default_data_dir()?;
-    ProfileStore::from_dir(&dir)
+    let db = faro_lib::db::Db::open(&dir.join("faro.db"))?;
+    let keychain = faro_lib::profiles::resolve_keychain_setting(&db, &dir);
+    ProfileStore::from_dir(&dir, keychain)
 }
 
 // ---- Path parsing ------------------------------------------------------

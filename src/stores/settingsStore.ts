@@ -12,6 +12,8 @@ export type PaneDensity = "comfortable" | "compact";
 export type RemoteImagePreviews = "off" | "on";
 // "single" = one server-focused pane (default); "dual" = local + remote panes.
 export type BrowserLayout = "single" | "dual";
+/** Title-bar window-control style: Windows (right, flush), macOS (traffic lights, left), Linux (right, rounded). */
+export type FrameStyle = "windows" | "macos" | "linux";
 export type AppTheme =
   | "dark"
   | "light"
@@ -83,6 +85,8 @@ export interface NotificationSettings {
 interface SettingsState {
   // Appearance
   appTheme: AppTheme;
+  /** Window-control layout of the custom title bar. */
+  frameStyle: FrameStyle;
   /** Optional accent override (hex). "" = use the theme's own accent. */
   accentColor: string;
   /** UI language. "system" follows the OS locale (Chinese only when it's zh). */
@@ -145,11 +149,14 @@ interface SettingsState {
 
   // Connections
   defaultPort: number;
+  /** Keep saved connection passwords in the OS keychain instead of profiles.json. */
+  storePasswordsInKeychain: boolean;
 
   // Notifications (Plan 16 Phase 3)
   notifications: NotificationSettings;
 
   setAppTheme: (t: AppTheme) => void;
+  setFrameStyle: (f: FrameStyle) => void;
   setAccentColor: (hex: string) => void;
   setUiLanguage: (lang: UiLanguage) => void;
   setUiZoom: (pct: number) => void;
@@ -179,6 +186,8 @@ interface SettingsState {
   setTerminalCopyOnSelect: (v: boolean) => void;
   setTerminalSuggestions: (v: boolean) => void;
   setDefaultPort: (n: number) => void;
+  /** Resolves once the passwords have moved; rejects (value unchanged) if the keychain refuses. */
+  setStorePasswordsInKeychain: (v: boolean) => Promise<void>;
   setNotifications: (v: NotificationSettings) => void;
 }
 
@@ -203,6 +212,7 @@ const STORAGE_KEY = "faro.settings.v1";
 type Persisted = Omit<
   SettingsState,
   | "setAppTheme"
+  | "setFrameStyle"
   | "setAccentColor"
   | "setUiLanguage"
   | "setUiZoom"
@@ -232,11 +242,13 @@ type Persisted = Omit<
   | "setTerminalCopyOnSelect"
   | "setTerminalSuggestions"
   | "setDefaultPort"
+  | "setStorePasswordsInKeychain"
   | "setNotifications"
 >;
 
 const DEFAULTS: Persisted = {
   appTheme: "dark",
+  frameStyle: "windows",
   accentColor: "",
   uiLanguage: "system",
   uiZoom: 100,
@@ -270,6 +282,7 @@ const DEFAULTS: Persisted = {
   terminalCopyOnSelect: true,
   terminalSuggestions: true,
   defaultPort: 22,
+  storePasswordsInKeychain: false,
   notifications: { enabled: true, unfocusedOnly: true },
 };
 
@@ -333,6 +346,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   ...initial,
 
   setAppTheme: (t) => mutate(set, get, "appTheme", t),
+  setFrameStyle: (f) => mutate(set, get, "frameStyle", f),
   setAccentColor: (hex) => mutate(set, get, "accentColor", hex),
   setUiLanguage: (lang) => mutate(set, get, "uiLanguage", lang),
   setUiZoom: (pct) => mutate(set, get, "uiZoom", clampUiZoom(pct)),
@@ -391,6 +405,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setTerminalSuggestions: (v) =>
     mutate(set, get, "terminalSuggestions", v),
   setDefaultPort: (n) => mutate(set, get, "defaultPort", n),
+  setStorePasswordsInKeychain: async (v) => {
+    await ipc.setProfilePasswordKeychain(v);
+    mutate(set, get, "storePasswordsInKeychain", v);
+  },
   setNotifications: (v) => mutate(set, get, "notifications", v),
 }));
 

@@ -443,6 +443,11 @@ export const ipc = {
   /** Bulk-upsert (the one-time localStorage import). */
   settingsSetAll: (values: Record<string, string>) =>
     invoke<void>("settings_set_all", { values }),
+  /** Move saved connection passwords between profiles.json and the OS keychain. */
+  setProfilePasswordKeychain: (on: boolean) =>
+    invoke<void>("set_profile_password_keychain", { on }),
+  /** Profiles whose keychain secret couldn't be read at launch. */
+  profileKeychainWarnings: () => invoke<string[]>("profile_keychain_warnings"),
 
   // ---- Encrypted backup / restore (Plan 12 Phase 4) ----
   /** Write an encrypted backup to `path`, protected by `password`. */
