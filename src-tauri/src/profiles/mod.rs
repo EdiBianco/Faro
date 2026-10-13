@@ -12,8 +12,17 @@ use tokio::sync::Mutex;
 /// in the OS keychain instead of `profiles.json`.
 pub const KEYCHAIN_SETTING: &str = "storePasswordsInKeychain";
 
-pub fn keychain_enabled(db: &Db) -> bool {
-    db.settings_get(KEYCHAIN_SETTING).ok().flatten().as_deref() == Some("true")
+/// Whether saved secrets live in the keychain. An explicit setting wins. With
+/// no setting yet, a fresh install (no `profiles.json` in `dir`) starts in the
+/// keychain; an existing install keeps its plain-text file. The resolved value
+/// is written back so the UI and the backend always read the same answer.
+pub fn resolve_keychain_setting(db: &Db, dir: &std::path::Path) -> bool {
+    if let Some(v) = db.settings_get(KEYCHAIN_SETTING).ok().flatten() {
+        return v == "true";
+    }
+    let fresh = !dir.join("profiles.json").exists();
+    let _ = db.settings_set(KEYCHAIN_SETTING, if fresh { "true" } else { "false" });
+    fresh
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -381,6 +390,32 @@ mod tests {
         assert!(on.contains("id_ed25519"));
         let off = serde_json::to_string(&for_disk(&profiles, false)).unwrap();
         assert!(off.contains("s3cret"));
+    }
+
+    #[test]
+    fn keychain_default_depends_on_install_age() {
+        let base = std::env::temp_dir().join(format!("faro-kc-default-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let db = Db::open_in_memory().unwrap();
+
+        // Fresh install: no profiles.json yet, so keychain by default, and recorded.
+        assert!(resolve_keychain_setting(&db, &base));
+        assert_eq!(db.settings_get(KEYCHAIN_SETTING).unwrap().as_deref(), Some("true"));
+
+        // Existing install without a setting row keeps plain text.
+        let old_db = Db::open_in_memory().unwrap();
+        std::fs::write(base.join("profiles.json"), "[]").unwrap();
+        assert!(!resolve_keychain_setting(&old_db, &base));
+        assert_eq!(old_db.settings_get(KEYCHAIN_SETTING).unwrap().as_deref(), Some("false"));
+
+        // An explicit setting always wins over the install-age default.
+        let off_db = Db::open_in_memory().unwrap();
+        off_db.settings_set(KEYCHAIN_SETTING, "false").unwrap();
+        let _ = std::fs::remove_file(base.join("profiles.json"));
+        assert!(!resolve_keychain_setting(&off_db, &base));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

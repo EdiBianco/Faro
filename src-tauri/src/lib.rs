@@ -213,8 +213,15 @@ pub fn run() {
                 std::fs::create_dir_all(&dir).ok();
                 Arc::new(db::Db::open(&dir.join("faro.db")).expect("failed to open faro.db"))
             };
+            let keychain = {
+                let dir = handle
+                    .path()
+                    .app_data_dir()
+                    .expect("resolving app_data_dir for keychain setting");
+                profiles::resolve_keychain_setting(&db, &dir)
+            };
             let profile_store = Arc::new(
-                profiles::ProfileStore::load_or_create(&handle, profiles::keychain_enabled(&db))
+                profiles::ProfileStore::load_or_create(&handle, keychain)
                     .expect("failed to initialise profile store"),
             );
             // Remote thumbnail cache lives under the app data dir alongside faro.db
