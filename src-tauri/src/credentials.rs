@@ -19,6 +19,17 @@ use anyhow::{anyhow, Context, Result};
 /// Reverse-DNS so it's unambiguous in Credential Manager / Keychain Access.
 pub const SERVICE: &str = "com.faro.credentials";
 
+/// Keychain purpose for a connection profile's saved password, used when the
+/// "store passwords in keychain" setting is on.
+pub fn profile_password_purpose(profile_id: &str) -> String {
+    format!("profile-password:{profile_id}")
+}
+
+/// Keychain purpose for a connection profile's SSH key passphrase.
+pub fn profile_passphrase_purpose(profile_id: &str) -> String {
+    format!("profile-passphrase:{profile_id}")
+}
+
 /// Write (or overwrite) a secret for `purpose`. An empty value clears it.
 pub fn set_secret(purpose: &str, value: &str) -> Result<()> {
     if value.is_empty() {

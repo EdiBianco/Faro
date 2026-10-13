@@ -34,7 +34,33 @@ pub async fn save_profile(
     profile: ConnectionProfile,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    if state.profiles.keychain_enabled() {
+        let keep = state.profiles.is_unresolved(&profile.id);
+        crate::profiles::sync_profile_secret(&profile, &state.db, keep).map_err(err)?;
+    }
     state.profiles.upsert(profile).await.map_err(err)
+}
+
+/// Names of profiles whose saved secret couldn't be read from the keychain at
+/// launch. The UI shows these as a warning.
+#[tauri::command]
+pub fn profile_keychain_warnings(state: State<'_, AppState>) -> Vec<String> {
+    state.profiles.keychain_warnings()
+}
+
+/// Turn the "store passwords in keychain" setting on or off, moving the saved
+/// passwords between `profiles.json` and the OS keychain.
+#[tauri::command]
+pub async fn set_profile_password_keychain(
+    on: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.profiles.set_keychain(on, &state.db).await.map_err(err)?;
+    let value = if on { "true" } else { "false" };
+    state
+        .db
+        .settings_set(crate::profiles::KEYCHAIN_SETTING, value)
+        .map_err(err)
 }
 
 /// Persist the rail's drag-and-drop order: `ids` is every profile id in the
@@ -82,6 +108,13 @@ pub async fn delete_profile(
             let _ = state
                 .db
                 .forget_keychain(crate::credentials::SERVICE, key_ref);
+        }
+        // Keychain-held saved password or key passphrase (no-op when none stored).
+        if let Some(purpose) = crate::profiles::secret_purpose(&p) {
+            crate::credentials::delete_secret(&purpose);
+            let _ = state
+                .db
+                .forget_keychain(crate::credentials::SERVICE, &purpose);
         }
     }
     state.profiles.delete(&id).await.map_err(err)
