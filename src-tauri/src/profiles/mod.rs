@@ -14,15 +14,26 @@ pub const KEYCHAIN_SETTING: &str = "storePasswordsInKeychain";
 
 /// Whether saved secrets live in the keychain. An explicit setting wins. With
 /// no setting yet, a fresh install (no `profiles.json` in `dir`) starts in the
-/// keychain; an existing install keeps its plain-text file. The resolved value
-/// is written back so the UI and the backend always read the same answer.
+/// keychain if one actually works here; an existing install keeps its
+/// plain-text file. The resolved value is written back so the UI and the
+/// backend always read the same answer.
 pub fn resolve_keychain_setting(db: &Db, dir: &std::path::Path) -> bool {
+    resolve_keychain_setting_with(db, dir, credentials::keychain_works)
+}
+
+fn resolve_keychain_setting_with(
+    db: &Db,
+    dir: &std::path::Path,
+    keychain_works: impl FnOnce() -> bool,
+) -> bool {
     if let Some(v) = db.settings_get(KEYCHAIN_SETTING).ok().flatten() {
         return v == "true";
     }
-    let fresh = !dir.join("profiles.json").exists();
-    let _ = db.settings_set(KEYCHAIN_SETTING, if fresh { "true" } else { "false" });
-    fresh
+    // A machine with no usable keychain (headless Linux without Secret
+    // Service) would fail every profile save, so it keeps the file.
+    let on = !dir.join("profiles.json").exists() && keychain_works();
+    let _ = db.settings_set(KEYCHAIN_SETTING, if on { "true" } else { "false" });
+    on
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,7 +237,7 @@ impl ProfileStore {
                 return Err(e);
             }
             for p in g.iter() {
-                if let Some(purpose) = secret_purpose(p) {
+                for purpose in all_secret_purposes(&p.id) {
                     credentials::delete_secret(&purpose);
                     let _ = db.forget_keychain(credentials::SERVICE, &purpose);
                 }
@@ -292,6 +303,15 @@ pub fn secret_purpose(profile: &ConnectionProfile) -> Option<String> {
     }
 }
 
+/// Every keychain purpose a profile's own secret can live under, whatever its
+/// current auth method. Used to clean up on delete and on an auth-kind switch.
+pub fn all_secret_purposes(profile_id: &str) -> [String; 2] {
+    [
+        credentials::profile_password_purpose(profile_id),
+        credentials::profile_passphrase_purpose(profile_id),
+    ]
+}
+
 /// Whether the secret slot of `auth` holds nothing.
 fn secret_is_empty(auth: &AuthMethod) -> bool {
     match auth {
@@ -314,7 +334,15 @@ fn set_secret_value(auth: &mut AuthMethod, value: String) {
 /// or clear both when it is empty. An empty value on an unresolved profile
 /// (`keep_unresolved`) is skipped so a failed read can't delete its entry.
 pub fn sync_profile_secret(profile: &ConnectionProfile, db: &Db, keep_unresolved: bool) -> Result<()> {
-    let Some(purpose) = secret_purpose(profile) else {
+    // An entry left under the other auth kind (e.g. password -> key) is stale.
+    let current = secret_purpose(profile);
+    for stale in all_secret_purposes(&profile.id) {
+        if current.as_ref() != Some(&stale) {
+            credentials::delete_secret(&stale);
+            db.forget_keychain(credentials::SERVICE, &stale)?;
+        }
+    }
+    let Some(purpose) = current else {
         return Ok(());
     };
     if secret_is_empty(&profile.auth) {
@@ -400,20 +428,26 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
 
         // Fresh install: no profiles.json yet, so keychain by default, and recorded.
-        assert!(resolve_keychain_setting(&db, &base));
+        assert!(resolve_keychain_setting_with(&db, &base, || true));
         assert_eq!(db.settings_get(KEYCHAIN_SETTING).unwrap().as_deref(), Some("true"));
 
-        // Existing install without a setting row keeps plain text.
+        // Fresh install on a machine with no usable keychain keeps the file.
+        let no_kc_db = Db::open_in_memory().unwrap();
+        assert!(!resolve_keychain_setting_with(&no_kc_db, &base, || false));
+        assert_eq!(no_kc_db.settings_get(KEYCHAIN_SETTING).unwrap().as_deref(), Some("false"));
+
+        // Existing install without a setting row keeps plain text, and the
+        // keychain isn't even probed.
         let old_db = Db::open_in_memory().unwrap();
         std::fs::write(base.join("profiles.json"), "[]").unwrap();
-        assert!(!resolve_keychain_setting(&old_db, &base));
+        assert!(!resolve_keychain_setting_with(&old_db, &base, || panic!("probed")));
         assert_eq!(old_db.settings_get(KEYCHAIN_SETTING).unwrap().as_deref(), Some("false"));
 
         // An explicit setting always wins over the install-age default.
         let off_db = Db::open_in_memory().unwrap();
         off_db.settings_set(KEYCHAIN_SETTING, "false").unwrap();
         let _ = std::fs::remove_file(base.join("profiles.json"));
-        assert!(!resolve_keychain_setting(&off_db, &base));
+        assert!(!resolve_keychain_setting_with(&off_db, &base, || panic!("probed")));
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -426,5 +460,72 @@ mod tests {
         assert_eq!(secret_purpose(&key).as_deref(), Some("profile-passphrase:p1"));
         let agent = profile(serde_json::json!({ "kind": "agent" }));
         assert_eq!(secret_purpose(&agent), None);
+    }
+
+    fn keychain_test_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("faro-kc-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Toggling moves secrets file -> keychain -> file, and a relaunch in
+    /// keychain mode loads them back. Run with
+    /// `cargo test -p faro --lib profiles -- --ignored`.
+    #[tokio::test]
+    #[ignore = "touches the OS keychain"]
+    async fn keychain_toggle_moves_secrets_both_ways() {
+        let dir = keychain_test_dir("toggle");
+        let db = Db::open_in_memory().unwrap();
+        let mut pw = profile(serde_json::json!({ "kind": "password", "password": "pw-test-1" }));
+        pw.id = format!("kc-test-pw-{}", std::process::id());
+        let mut key = profile(serde_json::json!({
+            "kind": "key", "path": "k", "passphrase": "pp-test-1"
+        }));
+        key.id = format!("kc-test-key-{}", std::process::id());
+        let file = dir.join("profiles.json");
+        std::fs::write(&file, serde_json::to_vec(&[&pw, &key]).unwrap()).unwrap();
+        let on_disk = || std::fs::read_to_string(&file).unwrap();
+        let stored = |p: &ConnectionProfile| credentials::get_secret(&secret_purpose(p).unwrap()).unwrap();
+
+        let store = ProfileStore::from_dir(&dir, false).unwrap();
+        store.set_keychain(true, &db).await.unwrap();
+        assert!(!on_disk().contains("pw-test-1") && !on_disk().contains("pp-test-1"));
+        assert_eq!(stored(&pw).as_deref(), Some("pw-test-1"));
+        assert_eq!(stored(&key).as_deref(), Some("pp-test-1"));
+
+        let relaunched = ProfileStore::from_dir(&dir, true).unwrap();
+        let loaded = relaunched.list().await.unwrap();
+        assert!(matches!(&loaded[0].auth, AuthMethod::Password { password } if password == "pw-test-1"));
+        assert!(matches!(&loaded[1].auth, AuthMethod::Key { passphrase: Some(p), .. } if p == "pp-test-1"));
+        assert!(relaunched.keychain_warnings().is_empty());
+
+        relaunched.set_keychain(false, &db).await.unwrap();
+        assert!(on_disk().contains("pw-test-1") && on_disk().contains("pp-test-1"));
+        assert_eq!(stored(&pw), None);
+        assert_eq!(stored(&key), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Switching a profile from password to key auth drops the old password
+    /// entry instead of leaving it orphaned in the keychain.
+    #[test]
+    #[ignore = "touches the OS keychain"]
+    fn keychain_auth_switch_drops_stale_entry() {
+        let db = Db::open_in_memory().unwrap();
+        let mut p = profile(serde_json::json!({ "kind": "password", "password": "pw-test-2" }));
+        p.id = format!("kc-test-switch-{}", std::process::id());
+        let [pw_purpose, pp_purpose] = all_secret_purposes(&p.id);
+
+        sync_profile_secret(&p, &db, false).unwrap();
+        assert_eq!(credentials::get_secret(&pw_purpose).unwrap().as_deref(), Some("pw-test-2"));
+
+        p.auth = AuthMethod::Key { path: "k".into(), passphrase: Some("pp-test-2".into()) };
+        sync_profile_secret(&p, &db, false).unwrap();
+        assert_eq!(credentials::get_secret(&pw_purpose).unwrap(), None);
+        assert_eq!(credentials::get_secret(&pp_purpose).unwrap().as_deref(), Some("pp-test-2"));
+        assert_eq!(db.list_keychain().unwrap().len(), 1);
+
+        credentials::delete_secret(&pp_purpose);
     }
 }

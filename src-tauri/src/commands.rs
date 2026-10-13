@@ -110,7 +110,7 @@ pub async fn delete_profile(
                 .forget_keychain(crate::credentials::SERVICE, key_ref);
         }
         // Keychain-held saved password or key passphrase (no-op when none stored).
-        if let Some(purpose) = crate::profiles::secret_purpose(&p) {
+        for purpose in crate::profiles::all_secret_purposes(&p.id) {
             crate::credentials::delete_secret(&purpose);
             let _ = state
                 .db
