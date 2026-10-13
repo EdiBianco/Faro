@@ -9,6 +9,7 @@ import {
   COLOR_THEMES,
   UI_ZOOM_STEPS,
   type AppTheme,
+  type FrameStyle,
   type OverwritePolicy,
   type SortField,
   type SortDirection,
@@ -125,6 +126,20 @@ export function Settings({ onClose }: Props) {
                   value: z,
                   label: z === 100 ? "100% (Default)" : `${z}%`,
                 }))}
+              />
+            </Field>
+            <Field
+              label="Window frame"
+              help="Where the window controls sit in Faro's title bar. Looks only — the window behaves the same."
+            >
+              <Segmented<FrameStyle>
+                value={s.frameStyle}
+                onChange={s.setFrameStyle}
+                options={[
+                  { value: "windows", label: "Windows" },
+                  { value: "macos", label: "macOS" },
+                  { value: "linux", label: "Linux" },
+                ]}
               />
             </Field>
             <Field

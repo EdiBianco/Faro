@@ -12,6 +12,8 @@ export type PaneDensity = "comfortable" | "compact";
 export type RemoteImagePreviews = "off" | "on";
 // "single" = one server-focused pane (default); "dual" = local + remote panes.
 export type BrowserLayout = "single" | "dual";
+/** Title-bar window-control style: Windows (right, flush), macOS (traffic lights, left), Linux (right, rounded). */
+export type FrameStyle = "windows" | "macos" | "linux";
 export type AppTheme =
   | "dark"
   | "light"
@@ -83,6 +85,8 @@ export interface NotificationSettings {
 interface SettingsState {
   // Appearance
   appTheme: AppTheme;
+  /** Window-control layout of the custom title bar. */
+  frameStyle: FrameStyle;
   /** Optional accent override (hex). "" = use the theme's own accent. */
   accentColor: string;
   /** UI language. "system" follows the OS locale (Chinese only when it's zh). */
@@ -152,6 +156,7 @@ interface SettingsState {
   notifications: NotificationSettings;
 
   setAppTheme: (t: AppTheme) => void;
+  setFrameStyle: (f: FrameStyle) => void;
   setAccentColor: (hex: string) => void;
   setUiLanguage: (lang: UiLanguage) => void;
   setUiZoom: (pct: number) => void;
@@ -207,6 +212,7 @@ const STORAGE_KEY = "faro.settings.v1";
 type Persisted = Omit<
   SettingsState,
   | "setAppTheme"
+  | "setFrameStyle"
   | "setAccentColor"
   | "setUiLanguage"
   | "setUiZoom"
@@ -242,6 +248,7 @@ type Persisted = Omit<
 
 const DEFAULTS: Persisted = {
   appTheme: "dark",
+  frameStyle: "windows",
   accentColor: "",
   uiLanguage: "system",
   uiZoom: 100,
@@ -339,6 +346,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   ...initial,
 
   setAppTheme: (t) => mutate(set, get, "appTheme", t),
+  setFrameStyle: (f) => mutate(set, get, "frameStyle", f),
   setAccentColor: (hex) => mutate(set, get, "accentColor", hex),
   setUiLanguage: (lang) => mutate(set, get, "uiLanguage", lang),
   setUiZoom: (pct) => mutate(set, get, "uiZoom", clampUiZoom(pct)),
