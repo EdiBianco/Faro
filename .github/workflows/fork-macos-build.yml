@@ -1,0 +1,55 @@
+name: fork-macos-build
+
+# Fork-only macOS build. Runs by hand from the Actions tab (or `gh workflow run`)
+# and uploads the app as a workflow artifact. It never creates a release and
+# never touches main, so it is safe to run on any branch of a fork.
+#
+# Unsigned, universal (Apple Silicon + Intel). No notarization or updater
+# artifacts: those need the Apple and updater secrets this fork doesn't have.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS universal app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          cache-on-failure: true
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build universal app and dmg
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+        working-directory: .
+
+      - name: Upload app and dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: faro-macos-universal
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+          if-no-files-found: error
+          retention-days: 14
