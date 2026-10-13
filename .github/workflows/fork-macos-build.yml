@@ -1,13 +1,16 @@
 name: fork-macos-build
 
-# Fork-only macOS build. Runs by hand from the Actions tab (or `gh workflow run`)
-# and uploads the app as a workflow artifact. It never creates a release and
-# never touches main, so it is safe to run on any branch of a fork.
+# Fork-only macOS build. Runs when a commit with the tag `[mac-build]` in its
+# message is pushed to dev, or by hand from the Actions tab once this file is
+# on the default branch. Uploads the app as a workflow artifact. It never
+# creates a release and never touches main.
 #
 # Unsigned, universal (Apple Silicon + Intel). No notarization or updater
 # artifacts: those need the Apple and updater secrets this fork doesn't have.
 
 on:
+  push:
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
@@ -16,6 +19,7 @@ permissions:
 jobs:
   macos:
     name: macOS universal app
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[mac-build]')
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
