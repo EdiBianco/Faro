@@ -104,6 +104,8 @@ async function dispatch(cmd: string, a: Args): Promise<unknown> {
     case "set_api_key":
     case "set_profile_password_keychain":
       return null;
+    case "profile_keychain_warnings":
+      return [];
     case "api_key_status":
       return false;
 
