@@ -26,7 +26,7 @@ See `PRODUCT.md` for the full pitch.
   complete and verified, say so. If a PR write-up helps, run the **`create-pr`**
   skill — it only *writes a description file* to `.pr/`, it does not open or push
   anything.
-- Keep the repo's commit trailer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+- Commits are authored by EdiBianco alone. No `Co-Authored-By` or other AI-attribution trailers.
 
 ### PR titles are plain English
 

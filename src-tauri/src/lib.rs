@@ -393,6 +393,7 @@ pub fn run() {
             commands::list_profiles,
             commands::save_profile,
             commands::set_profile_password_keychain,
+            commands::profile_keychain_warnings,
             commands::reorder_profiles,
             commands::delete_profile,
             commands::ssh_key_defaults,

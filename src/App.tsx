@@ -41,7 +41,7 @@ import { CopyTextButton, notificationText } from "./components/ui/CopyText";
 import { useBridge } from "./stores/bridgeStore";
 import { useSync } from "./stores/syncStore";
 import { useSettings } from "./stores/settingsStore";
-import { onDeepLink } from "./lib/ipc";
+import { ipc, onDeepLink } from "./lib/ipc";
 import { runDefaultBumps, runSettingsMigration } from "./lib/secretMigration";
 import { initNotifications } from "./lib/notifications";
 import { openTerminalWindow } from "./lib/popout";
@@ -113,6 +113,21 @@ export default function App() {
   // in that order, so the bumps apply on top of the imported values.
   useEffect(() => {
     void runSettingsMigration().then(runDefaultBumps);
+  }, []);
+
+  // Saved passwords/passphrases the keychain refused at launch: those profiles
+  // run without their secret until restart, so say which ones.
+  useEffect(() => {
+    ipc
+      .profileKeychainWarnings()
+      .then((names) => {
+        if (names.length)
+          toast.warning(
+            "Some saved passwords couldn't be read",
+            `Keychain access failed for: ${names.join(", ")}. Restart Faro after fixing keychain access.`,
+          );
+      })
+      .catch(() => {});
   }, []);
 
   // Desktop notifications (Plan 16 Phase 3): OS toasts for the curated events

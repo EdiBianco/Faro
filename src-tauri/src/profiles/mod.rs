@@ -114,10 +114,16 @@ pub struct ConnectionProfile {
 }
 
 // Plain JSON file in the app data dir. With the keychain setting on, saved
-// passwords live in the OS keychain and are left out of this file.
+// passwords and key passphrases live in the OS keychain and are left out of
+// this file.
 pub struct ProfileStore {
     path: PathBuf,
     keychain: AtomicBool,
+    /// Profiles whose keychain secret could not be read at launch, as
+    /// `(id, name)`. They run with an empty secret, and nothing is ever written
+    /// to or deleted from their keychain entry until the app restarts, so a
+    /// transient keychain error can't destroy a stored secret.
+    unresolved: Vec<(String, String)>,
     inner: Arc<Mutex<Vec<ConnectionProfile>>>,
 }
 
@@ -143,13 +149,19 @@ impl ProfileStore {
         } else {
             Vec::new()
         };
+        let mut unresolved = Vec::new();
         if keychain {
             for p in profiles.iter_mut() {
-                if let AuthMethod::Password { password } = &mut p.auth {
-                    if password.is_empty() {
-                        if let Some(v) = credentials::get_secret(&credentials::profile_password_purpose(&p.id))? {
-                            *password = v;
-                        }
+                let purpose = match secret_purpose(p) {
+                    Some(purpose) if secret_is_empty(&p.auth) => purpose,
+                    _ => continue,
+                };
+                match credentials::get_secret(&purpose) {
+                    Ok(Some(v)) => set_secret_value(&mut p.auth, v),
+                    Ok(None) => {}
+                    Err(e) => {
+                        eprintln!("keychain read failed for profile {}: {e:#}", p.name);
+                        unresolved.push((p.id.clone(), p.name.clone()));
                     }
                 }
             }
@@ -157,6 +169,7 @@ impl ProfileStore {
         Ok(Self {
             path: path.clone(),
             keychain: AtomicBool::new(keychain),
+            unresolved,
             inner: Arc::new(Mutex::new(profiles)),
         })
     }
@@ -165,14 +178,24 @@ impl ProfileStore {
         self.keychain.load(Ordering::SeqCst)
     }
 
-    /// Switch where saved passwords live. Turning it on moves each password into
-    /// the keychain before the file drops it; turning it off writes them back to
-    /// the file before the keychain entries are removed.
+    /// Names of profiles whose saved secret couldn't be read from the keychain.
+    pub fn keychain_warnings(&self) -> Vec<String> {
+        self.unresolved.iter().map(|(_, name)| name.clone()).collect()
+    }
+
+    /// Whether a profile's keychain entry must be left alone on an empty save.
+    pub fn is_unresolved(&self, id: &str) -> bool {
+        self.unresolved.iter().any(|(uid, _)| uid == id)
+    }
+
+    /// Switch where saved secrets live. Turning it on moves each secret into the
+    /// keychain before the file drops it; turning it off writes them back to the
+    /// file before the keychain entries are removed.
     pub async fn set_keychain(&self, on: bool, db: &Db) -> Result<()> {
         let g = self.inner.lock().await;
         if on {
             for p in g.iter() {
-                sync_password_secret(p, db)?;
+                sync_profile_secret(p, db, false)?;
             }
             self.keychain.store(true, Ordering::SeqCst);
             if let Err(e) = self.write(&g) {
@@ -180,14 +203,21 @@ impl ProfileStore {
                 return Err(e);
             }
         } else {
+            // Turning off writes secrets back to the file; a secret that never
+            // loaded would be written back empty and then lost with its entry.
+            if !self.unresolved.is_empty() {
+                anyhow::bail!(
+                    "couldn't read the saved passwords for {} from the keychain at launch; restart Faro with keychain access before turning this off",
+                    self.keychain_warnings().join(", ")
+                );
+            }
             self.keychain.store(false, Ordering::SeqCst);
             if let Err(e) = self.write(&g) {
                 self.keychain.store(true, Ordering::SeqCst);
                 return Err(e);
             }
             for p in g.iter() {
-                if let AuthMethod::Password { .. } = &p.auth {
-                    let purpose = credentials::profile_password_purpose(&p.id);
+                if let Some(purpose) = secret_purpose(p) {
                     credentials::delete_secret(&purpose);
                     let _ = db.forget_keychain(credentials::SERVICE, &purpose);
                 }
@@ -243,24 +273,58 @@ impl ProfileStore {
     }
 }
 
-/// Keychain side of one profile's saved password (only called in keychain mode):
-/// write it under the profile's purpose and record it in the manifest so backups
-/// pick it up, or clear both when the password is empty.
-pub fn sync_password_secret(profile: &ConnectionProfile, db: &Db) -> Result<()> {
-    let AuthMethod::Password { password } = &profile.auth else {
-        return Ok(());
-    };
-    let purpose = credentials::profile_password_purpose(&profile.id);
-    if password.is_empty() {
-        credentials::delete_secret(&purpose);
-        db.forget_keychain(credentials::SERVICE, &purpose)
-    } else {
-        credentials::set_secret(&purpose, password)?;
-        db.record_keychain(credentials::SERVICE, &purpose)
+/// Keychain purpose holding a profile's secret (saved password or key
+/// passphrase), or `None` when its auth method keeps no secret of its own.
+pub fn secret_purpose(profile: &ConnectionProfile) -> Option<String> {
+    match &profile.auth {
+        AuthMethod::Password { .. } => Some(credentials::profile_password_purpose(&profile.id)),
+        AuthMethod::Key { .. } => Some(credentials::profile_passphrase_purpose(&profile.id)),
+        _ => None,
     }
 }
 
-/// What lands in `profiles.json`: with the keychain on, passwords are blanked so
+/// Whether the secret slot of `auth` holds nothing.
+fn secret_is_empty(auth: &AuthMethod) -> bool {
+    match auth {
+        AuthMethod::Password { password } => password.is_empty(),
+        AuthMethod::Key { passphrase, .. } => passphrase.as_deref().map_or(true, str::is_empty),
+        _ => true,
+    }
+}
+
+fn set_secret_value(auth: &mut AuthMethod, value: String) {
+    match auth {
+        AuthMethod::Password { password } => *password = value,
+        AuthMethod::Key { passphrase, .. } => *passphrase = Some(value),
+        _ => {}
+    }
+}
+
+/// Keychain side of one profile's secret (keychain mode only): write it under
+/// the profile's purpose and record it in the manifest so backups pick it up,
+/// or clear both when it is empty. An empty value on an unresolved profile
+/// (`keep_unresolved`) is skipped so a failed read can't delete its entry.
+pub fn sync_profile_secret(profile: &ConnectionProfile, db: &Db, keep_unresolved: bool) -> Result<()> {
+    let Some(purpose) = secret_purpose(profile) else {
+        return Ok(());
+    };
+    if secret_is_empty(&profile.auth) {
+        if keep_unresolved {
+            return Ok(());
+        }
+        credentials::delete_secret(&purpose);
+        return db.forget_keychain(credentials::SERVICE, &purpose);
+    }
+    let value = match &profile.auth {
+        AuthMethod::Password { password } => password.as_str(),
+        AuthMethod::Key { passphrase, .. } => passphrase.as_deref().unwrap_or_default(),
+        _ => return Ok(()),
+    };
+    credentials::set_secret(&purpose, value)?;
+    db.record_keychain(credentials::SERVICE, &purpose)
+}
+
+/// What lands in `profiles.json`: with the keychain on, secrets are blanked so
 /// they never reach the file.
 fn for_disk(profiles: &[ConnectionProfile], keychain: bool) -> Vec<ConnectionProfile> {
     profiles
@@ -268,8 +332,10 @@ fn for_disk(profiles: &[ConnectionProfile], keychain: bool) -> Vec<ConnectionPro
         .cloned()
         .map(|mut p| {
             if keychain {
-                if let AuthMethod::Password { password } = &mut p.auth {
-                    password.clear();
+                match &mut p.auth {
+                    AuthMethod::Password { password } => password.clear(),
+                    AuthMethod::Key { passphrase, .. } => *passphrase = None,
+                    _ => {}
                 }
             }
             p
@@ -281,7 +347,7 @@ fn for_disk(profiles: &[ConnectionProfile], keychain: bool) -> Vec<ConnectionPro
 mod tests {
     use super::*;
 
-    fn password_profile() -> ConnectionProfile {
+    fn profile(auth: serde_json::Value) -> ConnectionProfile {
         serde_json::from_value(serde_json::json!({
             "id": "p1",
             "name": "box",
@@ -289,19 +355,41 @@ mod tests {
             "host": "example.test",
             "port": 22,
             "username": "ivo",
-            "auth": { "kind": "password", "password": "hunter2" }
+            "auth": auth
         }))
         .unwrap()
     }
 
     #[test]
     fn keychain_mode_keeps_password_out_of_file() {
-        let profiles = [password_profile()];
+        let profiles = [profile(serde_json::json!({ "kind": "password", "password": "hunter2" }))];
         let on = serde_json::to_string(&for_disk(&profiles, true)).unwrap();
         assert!(!on.contains("hunter2"));
         let off = serde_json::to_string(&for_disk(&profiles, false)).unwrap();
         assert!(off.contains("hunter2"));
         // The in-memory profile is untouched either way.
         assert!(matches!(&profiles[0].auth, AuthMethod::Password { password } if password == "hunter2"));
+    }
+
+    #[test]
+    fn keychain_mode_keeps_key_passphrase_out_of_file() {
+        let profiles = [profile(serde_json::json!({
+            "kind": "key", "path": "~/.ssh/id_ed25519", "passphrase": "s3cret"
+        }))];
+        let on = serde_json::to_string(&for_disk(&profiles, true)).unwrap();
+        assert!(!on.contains("s3cret"));
+        assert!(on.contains("id_ed25519"));
+        let off = serde_json::to_string(&for_disk(&profiles, false)).unwrap();
+        assert!(off.contains("s3cret"));
+    }
+
+    #[test]
+    fn secret_purpose_covers_password_and_passphrase() {
+        let pw = profile(serde_json::json!({ "kind": "password", "password": "" }));
+        assert_eq!(secret_purpose(&pw).as_deref(), Some("profile-password:p1"));
+        let key = profile(serde_json::json!({ "kind": "key", "path": "k" }));
+        assert_eq!(secret_purpose(&key).as_deref(), Some("profile-passphrase:p1"));
+        let agent = profile(serde_json::json!({ "kind": "agent" }));
+        assert_eq!(secret_purpose(&agent), None);
     }
 }

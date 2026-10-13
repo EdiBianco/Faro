@@ -485,8 +485,8 @@ export function Settings({ onClose }: Props) {
               />
             </Field>
             <ToggleField
-              label="Store passwords in the OS keychain"
-              help="Keep saved connection passwords in macOS Keychain / Windows Credential Manager instead of plaintext in profiles.json. Turning it on or off moves the existing passwords straight away."
+              label="Store passwords and key passphrases in the OS keychain"
+              help="Keep saved connection passwords and SSH key passphrases in macOS Keychain / Windows Credential Manager instead of plaintext in profiles.json. Turning it on or off moves them straight away."
               checked={s.storePasswordsInKeychain}
               onChange={(v) =>
                 s.setStorePasswordsInKeychain(v).catch((e) =>
