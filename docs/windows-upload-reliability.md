@@ -233,14 +233,15 @@ Compilation release optimisée et génération NSIS réussies. Artefact final :
 src-tauri/target/release/bundle/nsis/Faro_1.3.48_x64-setup.exe
 ```
 
-Taille : 7 604 353 octets. Application embarquée : Windows x64, version 1.3.48.
-Le fichier de dépendances Rust référence le frontend final index-CJxqRRRm.js.
-Code source enregistré localement dans le commit cb69aa6 sur dev, sans push.
+Taille : 7 605 582 octets. Application embarquée : Windows x64, version 1.3.48.
+Le fichier de dépendances Rust référence le frontend final index-GaKBXxew.js.
+Code source : commit 072506e sur dev, publié dans la PR #40 avec la correction
+du panneau de résultats refermable.
 
 SHA-256 de l’installateur :
 
 ```text
-C85D7C18712896E59783480EB1AD5D9BC5287E35A1D18A73E5575C26ABC038D2
+6E7279632DA429DF2C7902E82480A4F3DFC643353A2D33695DAD07B999F0FEFC
 ```
 
 Une empreinte .sha256 est disponible à côté du .exe. Le script NSIS généré
