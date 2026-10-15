@@ -126,6 +126,29 @@ Résultats obtenus et limites de la session :
 - Build frontend et compilation Rust : réussis pendant la session ; les étapes
   finales de génération NSIS sont consignées dans le rapport de livraison.
 
+Couverture des scénarios demandés :
+
+| Scénario | Vérification effectuée |
+| --- | --- |
+| Fichier unique | Inventaire Rust, fichier vide et fichier de 64 Mio |
+| Fichiers multiples | Commande d’inventaire, test Rust |
+| Dossier avec fichiers | Préparation Rust et FTP réel |
+| Plusieurs dossiers | Commande d’inventaire, test Rust |
+| Sélection mixte | Inventaire Rust et ordonnancement du store |
+| Plus de 10 niveaux | Arborescence de 12 niveaux, test Rust |
+| Dossiers vides | Tests Rust et FTP réel |
+| Accents et espaces | Inventaire Rust ; dossier accentué en FTP réel |
+| Gros fichier | Inventaire de 64 Mio ; transfert de gros volume à tester sur le serveur cible |
+| Zéro octet | Inventaire Rust et aller-retour FTP réel |
+| Cachés | Fichier `.hidden` inventorié et transféré ; attribut Hidden Windows à tester manuellement |
+| Collisions | Doublons de noms, collision fichier/dossier et politique existante ; dialogue à tester sur le serveur cible |
+| Interruption réseau | Simulations du moteur de reprise/ranges ; coupure réelle pendant upload à tester manuellement |
+| Permission distante | Compte FTP réellement limité en lecture |
+| Annulation | Tests existants du moteur et de l’interface ; annulation d’un upload réel à tester manuellement |
+| Réessai | Interface de file, moteur et verrou contre réessais concurrents |
+| `assets` volumineux | 350 assets et 2 autres fichiers envoyés puis relus, contenus comparés |
+| Explorer → sous-dossier distant | Résolution implémentée ; geste natif à valider manuellement |
+
 ## Limites et validation manuelle Windows obligatoire
 
 L’automatisation exécutée ne pilote pas Explorer ni le bureau Windows. Elle ne
@@ -198,3 +221,27 @@ Fichiers concernés : `packages/file-ui/src/components/FilePane.tsx`,
 `scripts/{upload-outcome.test.mjs,upload-store.test.mjs,upload-ftp-lab.py}`, ce document et `.gitignore`.
 `Cargo.lock` est resynchronisé sur les versions 1.3.48 déjà déclarées dans les
 manifests (il portait encore 1.3.38) ; aucune nouvelle dépendance applicative.
+
+## Installateur produit
+
+Compilation release optimisée et génération NSIS réussies. Artefact final :
+
+```text
+src-tauri/target/release/bundle/nsis/Faro_1.3.48_x64-setup.exe
+```
+
+Taille : 7 604 353 octets. Application embarquée : Windows x64, version 1.3.48.
+Le fichier de dépendances Rust référence le frontend final index-CJxqRRRm.js.
+Code source enregistré localement dans le commit cb69aa6 sur dev, sans push.
+
+SHA-256 de l’installateur :
+
+```text
+C85D7C18712896E59783480EB1AD5D9BC5287E35A1D18A73E5575C26ABC038D2
+```
+
+Une empreinte .sha256 est disponible à côté du .exe. Le script NSIS généré
+conserve BUNDLEID=com.juandenis.faro et INSTALLMODE=currentUser ; sa suppression
+AppData est conditionnée au choix explicite de suppression des données hors
+mode mise à jour. L’installation sur le profil existant et les gestes Explorer
+restent les étapes manuelles décrites ci-dessus.
