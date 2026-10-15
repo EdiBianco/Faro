@@ -63,6 +63,8 @@ export interface UploadReport {
 
 interface TransfersState {
   uploadReports: UploadReport[];
+  uploadReportsOpen: boolean;
+  setUploadReportsOpen: (open: boolean) => void;
   validateUploads: () => Promise<void>;
   byId: Record<string, Transfer>;
   panelOpen: boolean;
@@ -228,6 +230,8 @@ function indexBy(transfers: Transfer[]): Record<string, Transfer> {
 
 export const useTransfers = create<TransfersState>((set, get) => ({
   uploadReports: [],
+  uploadReportsOpen: true,
+  setUploadReportsOpen: (open) => set({ uploadReportsOpen: open }),
   validateUploads: async () => {
     for (const report of get().uploadReports) {
       if (report.preparing || report.validation !== "waiting" || report.errors.length || report.canceled || report.skipped) continue;
@@ -265,8 +269,8 @@ export const useTransfers = create<TransfersState>((set, get) => ({
   concurrency: 3,
   throttleKbps: 0,
 
-  togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
-  setPanelOpen: (open) => set({ panelOpen: open }),
+  togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen, uploadReportsOpen: !s.panelOpen })),
+  setPanelOpen: (open) => set({ panelOpen: open, uploadReportsOpen: open }),
 
   initListeners: async () => {
     const unlistenEvents = await onTransferEvent((kind, t) => {
@@ -368,7 +372,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
       [...s.uploadReports.filter((r) => r.id !== report.id), { ...report,
         transferIds: [...report.transferIds], errors: [...report.errors] }] }));
     publish();
-    set({ panelOpen: true });
+    set({ panelOpen: true, uploadReportsOpen: true });
     try {
       const inventory = await inspectUploadPaths(items.map((item) => item.path));
       if (staged) {

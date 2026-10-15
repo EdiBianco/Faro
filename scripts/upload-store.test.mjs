@@ -88,6 +88,28 @@ test('an inventory error prevents every remote mutation', async () => {
   assert.equal(calls.length, 0);
   assert.equal(store.getState().uploadReports[0].errors.length, 1);
 });
+test('upload reports can be hidden and reopened without losing failures or transfer rows', async () => {
+  const { store, folder } = await harness({ fileError: true });
+  await store.getState().enqueueUploads('server', [folder], '/target');
+  const reportId = store.getState().uploadReports[0].id;
+  store.getState().setUploadReportsOpen(false);
+  assert.equal(store.getState().uploadReportsOpen, false);
+  assert.equal(store.getState().uploadReports[0].id, reportId);
+  assert.equal(Object.values(store.getState().byId).filter(t => t.status === 'error').length, 2);
+  store.getState().setPanelOpen(false);
+  store.getState().togglePanel();
+  assert.equal(store.getState().uploadReportsOpen, true);
+  assert.equal(store.getState().uploadReports[0].id, reportId);
+});
+test('a new upload reopens hidden reports and closing Transfers hides both panels', async () => {
+  const { store, single } = await harness();
+  store.getState().setUploadReportsOpen(false);
+  await store.getState().enqueueUploads('server', [single], '/target');
+  assert.equal(store.getState().uploadReportsOpen, true);
+  store.getState().setPanelOpen(false);
+  assert.equal(store.getState().uploadReportsOpen, false);
+  assert.equal(store.getState().panelOpen, false);
+});
 test('staged publication happens once, only after final verification', async () => {
   const { store, folder, calls, settle } = await harness();
   await store.getState().enqueueUploads('server', [folder], '/target', true);

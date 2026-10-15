@@ -45,8 +45,10 @@ peut pas attribuer avec certitude l’incident `assets` à un défaut particulie
 - Récapitulatif des lots dérivé des états du moteur, des octets et de la
   vérification finale des dossiers. Succès complet, partiel, échec et annulation
   sont distingués. Un succès sur `index.html` ne valide pas le lot à lui seul.
-- Les récapitulatifs et erreurs restent affichés après masquage du panneau des
-  transferts. Les fichiers échoués réutilisent les réessais existants ; les
+- Le récapitulatif dispose d’une croix pour le masquer. Fermer le panneau des
+  transferts masque également les récapitulatifs ; le bouton « Transfers » les
+  rouvre avec les résultats et erreurs conservés. Un nouvel upload les rouvre.
+  Les fichiers échoués réutilisent les réessais existants ; les
   sélections non démarrées peuvent être soumises à nouveau à la même destination.
   Les lignes référencées par un lot ne sont pas effacées par « Clear finished ».
 
@@ -115,8 +117,9 @@ cargo test -p faro --lib live_ftp_manifest_permission_denied -- --ignored --noca
 
 Résultats obtenus et limites de la session :
 
-- Tests frontend : 16 tests de statuts et 7 tests du store réel avec IPC simulée, tous réussis. La publication est bloquée en cas d’erreur de fichier, de dossier ou de volume.
-- Test d’interface de file sous Edge : toutes les assertions réussies.
+- Tests frontend : 16 tests de statuts et 9 tests du store réel avec IPC simulée, tous réussis. La publication est bloquée en cas d’erreur de fichier, de dossier ou de volume.
+- Test d’interface de file sous Edge : toutes les assertions réussies, y compris
+  fermeture du récapitulatif, réouverture via Transfers et conservation des erreurs.
 - Suite Rust : 279 réussis, 33 ignorés ; les tests d’intégration FTP sont exécutés
   séparément. Un premier échec OpenSSH venait des ACL du dossier temporaire de
   l’environnement ; le même test et la suite passent avec un dossier temporaire

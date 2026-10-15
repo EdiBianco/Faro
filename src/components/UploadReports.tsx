@@ -1,14 +1,25 @@
 import { uploadOutcome } from "@/lib/uploadOutcome";
 import { useTransfers } from "@/stores/transfersStore";
+import { X } from "lucide-react";
 
 /** Derived from engine terminal states, never from the progress animation. */
 export function UploadReports() {
   const reports = useTransfers((s) => s.uploadReports);
+  const open = useTransfers((s) => s.uploadReportsOpen);
+  const setOpen = useTransfers((s) => s.setUploadReportsOpen);
   const byId = useTransfers((s) => s.byId);
   const retry = useTransfers((s) => s.retry);
   const enqueueUploads = useTransfers((s) => s.enqueueUploads);
-  if (!reports.length) return null;
-  return <div className="max-h-40 overflow-auto border-t border-border bg-bg-panel px-3 py-2 text-xs" aria-live="polite">
+  if (!open || !reports.length) return null;
+  return <section aria-label="Upload results" className="flex max-h-40 shrink-0 flex-col border-t border-border bg-bg-panel text-xs">
+    <div className="flex shrink-0 items-center justify-between border-b border-border bg-bg-subtle px-3 py-1.5">
+      <span className="font-semibold text-text-muted">Upload results</span>
+      <button type="button" aria-label="Hide upload results" title="Hide upload results — reopen from Transfers"
+        onClick={() => setOpen(false)} className="rounded p-1 text-text-muted hover:bg-bg-hover hover:text-text">
+        <X size={14} />
+      </button>
+    </div>
+    <div className="min-h-0 overflow-y-auto px-3 py-2" aria-live="polite">
     {reports.map((report) => {
       const rows = report.transferIds.map((id) => byId[id]);
       const { done, skipped, complete, status } = uploadOutcome(report, rows);
@@ -29,5 +40,6 @@ export function UploadReports() {
         }}>Retry failed files</button>}
       </div>;
     })}
-  </div>;
+    </div>
+  </section>;
 }
