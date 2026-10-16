@@ -3836,6 +3836,10 @@ async fn dispatch_upload(
     }
     // Remote metadata is independent of the byte-copy progress counter.
     // Listing failures are terminal: an unverified partial file cannot be done.
+    // Only path-addressed filesystems are checked: SaaS backends (WordPress,
+    // Shopify, Drive, …) may rename or convert what they store, so a name or
+    // size mismatch there is not a failed upload — and a false failure would
+    // feed the retry loop and duplicate the upload.
     let direct_size = match &**session {
         Session::Ssh(ssh) => {
             let cell = ssh.ensure_sftp().await?;
@@ -3844,7 +3848,11 @@ async fn dispatch_upload(
                 .context("SFTP server did not return a file size")?)
         }
         Session::Ftp(_) | Session::Object(_) => remote_size(session, final_remote).await.ok(),
-        _ => None,
+        Session::Webdav(_) | Session::Agent(_) => None,
+        _ => {
+            mgr.verify_upload(id, session, local, final_remote).await?;
+            return Ok(n);
+        }
     };
     let actual_size = if let Some(size) = direct_size { size } else {
         let (parent, name) = final_remote.rsplit_once('/').unwrap_or((".", final_remote));

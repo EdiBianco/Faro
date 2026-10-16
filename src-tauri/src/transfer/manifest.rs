@@ -23,15 +23,15 @@ pub async fn inventory(root: &Path) -> Result<Manifest> {
         }
         let meta = tokio::fs::symlink_metadata(&path).await
             .with_context(|| format!("inspect {}", path.display()))?;
-        #[cfg(windows)]
-        let reparse = {
-            use std::os::windows::fs::MetadataExt;
-            meta.file_attributes() & 0x400 != 0
-        };
-        #[cfg(not(windows))]
-        let reparse = false;
-        if meta.file_type().is_symlink() || reparse {
-            bail!("Links and reparse points are not uploaded: {}", path.display());
+        // `is_symlink` covers Windows symlinks and junctions (name-surrogate
+        // reparse points) but not OneDrive/cloud placeholders, which are
+        // reparse points too and must upload like regular files.
+        if meta.file_type().is_symlink() {
+            if path == root {
+                bail!("Links and reparse points are not uploaded: {}", path.display());
+            }
+            tracing::warn!("upload skips link {}", path.display());
+            continue;
         }
         let modified = meta.modified()?.duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos()).unwrap_or(0);
@@ -170,17 +170,20 @@ mod tests {
 
     #[cfg(windows)]
     #[tokio::test]
-    async fn junction_loop_is_rejected_instead_of_followed() {
+    async fn junction_loop_is_skipped_instead_of_followed() {
         let root = std::env::temp_dir().join(format!("faro-junction-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
         let junction = root.join("loop");
         let output = std::process::Command::new("cmd.exe")
             .args(["/c", "mklink", "/J"]).arg(&junction).arg(&root).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        let result = inventory(&root).await;
+        let tree = inventory(&root).await;
+        let direct = inventory(&junction).await;
         // Remove just the junction, never recursively walk its target.
         std::fs::remove_dir(&junction).unwrap();
         std::fs::remove_dir(&root).unwrap();
-        assert!(result.unwrap_err().to_string().contains("reparse"));
+        let tree = tree.unwrap();
+        assert_eq!((tree.directories.len(), tree.files.len()), (1, 0), "nested junction is skipped");
+        assert!(direct.unwrap_err().to_string().contains("reparse"));
     }
 }
